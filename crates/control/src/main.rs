@@ -7,22 +7,19 @@ mod capture;
 mod hotkey;
 mod session;
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 use smartmaupad_shared::config;
 use smartmaupad_shared::protocol::DEFAULT_PORT;
+use smartmaupad_ui as ui;
 
 use hotkey::Hotkey;
 use session::{Event, Params, Session};
 
 const CONFIG_FILE: &str = "control.toml";
 const SENSITIVITY_RANGE: std::ops::RangeInclusive<f32> = 0.2..=3.0;
-
-const COLOR_OK: egui::Color32 = egui::Color32::from_rgb(60, 180, 90);
-const COLOR_ERROR: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
@@ -45,19 +42,6 @@ impl Default for Config {
             hotkey: Hotkey::default(),
         }
     }
-}
-
-fn install_fonts(ctx: &egui::Context) {
-    // Font mặc định của egui thiếu nhiều dấu tiếng Việt; dùng Segoe UI của Windows.
-    let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_owned());
-    let Ok(bytes) = std::fs::read(format!("{windir}\\Fonts\\segoeui.ttf")) else {
-        return;
-    };
-    let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert("segoe".to_owned(), Arc::new(egui::FontData::from_owned(bytes)));
-    fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "segoe".to_owned());
-    fonts.families.entry(egui::FontFamily::Monospace).or_default().push("segoe".to_owned());
-    ctx.set_fonts(fonts);
 }
 
 #[derive(PartialEq)]
@@ -84,7 +68,7 @@ struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        install_fonts(&cc.egui_ctx);
+        ui::install(&cc.egui_ctx);
         let cfg: Config = config::load(CONFIG_FILE);
         Self {
             host: cfg.host,
@@ -193,30 +177,29 @@ impl App {
     }
 
     fn form(&mut self, ui: &mut egui::Ui) {
-        egui::Grid::new("form").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            ui.label("IP target");
+        ui::row(ui, "IP target", |ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.host)
                     .hint_text("100.x.y.z")
-                    .desired_width(200.0),
+                    .desired_width(190.0),
             );
-            ui.end_row();
-
-            ui.label("Cổng");
-            ui.add(egui::TextEdit::singleline(&mut self.port).desired_width(80.0));
-            ui.end_row();
-
-            ui.label("Mật khẩu");
+        });
+        ui.separator();
+        ui::row(ui, "Cổng", |ui| {
+            ui.add(egui::TextEdit::singleline(&mut self.port).desired_width(90.0));
+        });
+        ui.separator();
+        ui::row(ui, "Mật khẩu", |ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut self.password).password(true).desired_width(200.0),
+                egui::TextEdit::singleline(&mut self.password).password(true).desired_width(190.0),
             );
-            ui.end_row();
-
-            ui.label("Độ nhạy chuột");
+        });
+        ui.separator();
+        ui::row(ui, "Độ nhạy chuột", |ui| {
             ui.add(egui::Slider::new(&mut self.sensitivity, SENSITIVITY_RANGE).fixed_decimals(1));
-            ui.end_row();
-
-            ui.label("Phím tắt dừng");
+        });
+        ui.separator();
+        ui::row(ui, "Phím tắt dừng", |ui| {
             let text = if self.recording_hotkey {
                 "Nhấn tổ hợp phím… (Esc để huỷ)".to_owned()
             } else {
@@ -229,8 +212,40 @@ impl App {
             {
                 self.recording_hotkey = !self.recording_hotkey;
             }
-            ui.end_row();
         });
+    }
+
+    fn status_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let palette = ui::Palette::of(ui.visuals());
+        match self.phase {
+            Phase::Idle => {
+                let label = egui::RichText::new("Chưa kết nối").color(palette.text_secondary);
+                ui::row(ui, label, |ui| {
+                    if ui::primary_button(ui, "Bắt đầu").clicked() {
+                        self.start(ctx);
+                    }
+                });
+            }
+            Phase::Connecting => {
+                ui::row(ui, "Đang kết nối…", |ui| {
+                    if ui::button(ui, "Huỷ").clicked() {
+                        if let Some(session) = &self.session {
+                            session.cancel();
+                        }
+                    }
+                    ui.spinner();
+                });
+            }
+            Phase::Active => {
+                let ping = match self.rtt {
+                    Some(rtt) => format!(" — ping {:.0} ms", rtt.as_secs_f64() * 1000.0),
+                    None => String::new(),
+                };
+                let label =
+                    egui::RichText::new(format!("Đang điều khiển{ping}")).color(palette.success);
+                ui::row(ui, label, |_| {});
+            }
+        }
     }
 }
 
@@ -239,57 +254,35 @@ impl eframe::App for App {
         self.poll_session(ctx);
         self.record_hotkey(ctx);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("SmartMaupad — Control");
-            ui.add_space(6.0);
+        ui::page(ctx, "Control", |ui| {
+            let palette = ui::Palette::of(ui.visuals());
 
-            ui.add_enabled_ui(self.phase == Phase::Idle, |ui| self.form(ui));
-            ui.add_space(10.0);
-
-            match self.phase {
-                Phase::Idle => {
-                    if ui.add_sized([120.0, 32.0], egui::Button::new("Bắt đầu")).clicked() {
-                        self.start(ctx);
-                    }
-                    ui.add_space(4.0);
-                    ui.weak(format!(
-                        "Khi đang điều khiển, chuột bị khoá trong ô 200px. \
-                         Nhấn {} trên bàn phím để dừng.",
-                        self.hotkey
-                    ));
-                }
-                Phase::Connecting => {
-                    ui.horizontal(|ui| {
-                        if ui.add_sized([120.0, 32.0], egui::Button::new("Huỷ")).clicked() {
-                            if let Some(session) = &self.session {
-                                session.cancel();
-                            }
-                        }
-                        ui.spinner();
-                        ui.label("Đang kết nối…");
-                    });
-                }
-                Phase::Active => {
-                    let ping = match self.rtt {
-                        Some(rtt) => format!(" — ping {:.0} ms", rtt.as_secs_f64() * 1000.0),
-                        None => String::new(),
-                    };
-                    ui.colored_label(COLOR_OK, format!("Đang điều khiển{ping}"));
-                    ui.label(format!("Nhấn {} để dừng.", self.hotkey));
-                }
-            }
+            ui::card(ui, |ui| {
+                ui.add_enabled_ui(self.phase == Phase::Idle, |ui| self.form(ui));
+            });
+            ui.add_space(4.0);
+            ui::card(ui, |ui| self.status_card(ui, ctx));
 
             match &self.last_result {
                 Some(Ok(message)) => {
-                    ui.add_space(6.0);
                     ui.label(message);
                 }
                 Some(Err(error)) => {
-                    ui.add_space(6.0);
-                    ui.colored_label(COLOR_ERROR, error);
+                    ui.colored_label(palette.error, error);
                 }
                 None => {}
             }
+
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(format!(
+                    "Khi đang điều khiển, chuột bị khoá trong ô 200px. \
+                     Nhấn {} trên bàn phím để dừng.",
+                    self.hotkey
+                ))
+                .small()
+                .color(palette.text_secondary),
+            );
         });
     }
 }
@@ -297,8 +290,8 @@ impl eframe::App for App {
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([380.0, 360.0])
-            .with_resizable(false),
+            .with_inner_size([440.0, 500.0])
+            .with_min_inner_size([400.0, 460.0]),
         ..Default::default()
     };
     eframe::run_native(

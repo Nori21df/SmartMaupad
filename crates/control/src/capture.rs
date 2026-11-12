@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use smartmaupad_shared::protocol::{Message, MouseButton, INJECT_TAG};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
 use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, ClientToScreen, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint,
     FillRect, SelectObject, SetBkMode, SetTextColor, HBRUSH, HFONT, PAINTSTRUCT,
@@ -46,9 +47,14 @@ const TIMER_MS: u32 = 250;
 const FOCUS_GRACE_TICKS: u32 = 4;
 const WM_APP_STOP: u32 = WM_APP + 1;
 
-const COLOR_BACKGROUND: u32 = 0x0022_1E1E;
-const COLOR_BORDER: u32 = 0x00D7_7800;
-const COLOR_TEXT: u32 = 0x00F0_F0F0;
+// Nền tối và màu accent của Windows 11, dạng COLORREF (0x00BBGGRR).
+const COLOR_BACKGROUND: u32 = 0x0020_2020;
+const COLOR_BORDER: u32 = 0x00FF_CD60;
+const COLOR_TEXT: u32 = 0x00FF_FFFF;
+
+const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+const DWMWA_BORDER_COLOR: u32 = 34;
+const DWMWCP_ROUND: u32 = 2;
 
 const HC_ACTION: i32 = 0;
 const LLKHF_EXTENDED: u32 = 0x01;
@@ -334,6 +340,19 @@ unsafe fn run_window(
     );
     if hwnd.is_null() {
         return StopReason::Failed("Không tạo được ô bắt chuột.".to_owned());
+    }
+
+    // Bo góc và viền accent kiểu Windows 11. Trên Windows 10 hai lời gọi này
+    // thất bại vô hại và ô giữ viền vuông tự vẽ.
+    for (attribute, value) in
+        [(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND), (DWMWA_BORDER_COLOR, COLOR_BORDER)]
+    {
+        DwmSetWindowAttribute(
+            hwnd,
+            attribute,
+            (&value as *const u32).cast::<c_void>(),
+            size_of::<u32>() as u32,
+        );
     }
 
     let face = wide("Segoe UI");

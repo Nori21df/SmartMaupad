@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 smartmaupad-shared.workspace = true
+smartmaupad-ui.workspace = true
 eframe.workspace = true
 serde.workspace = true
 if-addrs.workspace = true

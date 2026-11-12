@@ -1,0 +1,7 @@
+[package]
+name = "smartmaupad-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eframe.workspace = true
