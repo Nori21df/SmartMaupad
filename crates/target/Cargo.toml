@@ -1,0 +1,15 @@
+[package]
+name = "smartmaupad-target"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "smartmaupad-target"
+path = "src/main.rs"
+
+[dependencies]
+smartmaupad-shared.workspace = true
+eframe.workspace = true
+serde.workspace = true
+if-addrs.workspace = true
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse"] }
